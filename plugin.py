@@ -1,6 +1,6 @@
 bl_info = {
     "name": "Export to Milo",
-    "blender": (4, 1, 0),
+    "blender": (4, 0, 0),
     "category": "Import-Export",
     "description": "Exports Blender objects to a Milo scene.",
     "version": (0, 1),
@@ -101,18 +101,50 @@ def write_bone_data(armature, file):
         for value in inverse_matrix:
             file.write(struct.pack('>fff', value[0], value[1], value[2]))
 
+        print(bone.matrix_local.to_translation())
+
         # we need to shift the bone to 0,0,0
-        local_translation = -bone.head_local
-        for value in local_translation:
-            file.write(struct.pack('>f', 0))
+        translation_vec3 = -bone.matrix_local.to_translation()
+        for value in translation_vec3:
+            file.write(struct.pack('>f', value))
+            
+def write_draw(file, x=0.0, y=0.0, z=0.0, radius=0.0):
+    # Draw stuff
+    file.write(struct.pack('>i', 3))  # RB3 version
+    file.write(struct.pack('>c', b'\x01'))  # is showing, should always be true
+    file.write(struct.pack('>fff', x, y, z))  # x y z
+    file.write(struct.pack('>f', radius))  # radius
+    file.write(struct.pack('>f', 1.0))  # draw order, just use 0
+    
+def write_transform(file, world_translation):
+    file.write(struct.pack('>fff', 1.0, 0.0, 0.0))
+    file.write(struct.pack('>fff', 0.0, 1.0, 0.0))
+    file.write(struct.pack('>fff', 0.0, 0.0, 1.0))
+    for value in world_translation:
+        file.write(struct.pack('>f', value))
+        
+def write_rndtrans(file, obj, exporter):
+    # RndTransformable members
+    file.write(struct.pack('>i', 9))  # transVersion
+
+    # local XFM
+    write_transform(file, np.array(obj.matrix_basis.to_translation()))
+        
+    # world XFM
+    write_transform(file, np.array(obj.matrix_world.to_translation()))
+    
+    file.write(struct.pack('>i', 0))  # constraint
+    file.write(struct.pack('>i', 0))  # target
+    file.write(struct.pack('>c', b'\x00'))  # preserveScale
+    parent_name = exporter.directory_name
+    str_bytes = parent_name.encode('utf-8')  # Use parent bone's name or "custom_character"
+    file.write(struct.pack('>i', len(str_bytes)))
+    file.write(str_bytes)
+    
 
 def write_mesh_to_file(obj, file, exporter):
     mesh = obj.data
     uv_layer = mesh.uv_layers.active if mesh.uv_layers.active else None
-
-    # im gonna be honest.... i dont know what im doing here
-    world_translation = np.array(obj.matrix_world.to_translation())
-    local_translation = np.array(obj.matrix_basis.to_translation())
     
     # try to get the armature via the armature modifier on the mesh
     armature_modifier = next((modifier for modifier in obj.modifiers if modifier.type == 'ARMATURE'), None)
@@ -135,34 +167,13 @@ def write_mesh_to_file(obj, file, exporter):
     file.write(struct.pack('>c', b'\x00'))  # hasTree
     file.write(struct.pack('>i', 0))  # note
     
-    # RndTransformable members
-    file.write(struct.pack('>i', 9))  # transVersion
-
-    # local XFM
-    for value in obj.matrix_basis.to_3x3():
-        file.write(struct.pack('>fff', value[0], value[1], value[2]))
-    for value in world_translation:
-        file.write(struct.pack('>f', value))
-        
-    # world XFM
-    for value in obj.matrix_world.to_3x3():
-        file.write(struct.pack('>fff', value[0], value[1], value[2]))
-    for value in local_translation:
-        file.write(struct.pack('>f', value))
-    
-    file.write(struct.pack('>i', 0))  # constraint
-    file.write(struct.pack('>i', 0))  # target
-    file.write(struct.pack('>c', b'\x00'))  # preserveScale
-    parent_name = exporter.directory_name
-    str_bytes = parent_name.encode('utf-8')  # Use parent bone's name or "custom_character"
-    file.write(struct.pack('>i', len(str_bytes)))
-    file.write(str_bytes)
+    write_rndtrans(file, obj, exporter)
     
     # RndDrawable members
     file.write(struct.pack('>i', 3))  # drawVersion
     file.write(struct.pack('>c', b'\x01'))  # showing (needs to always be 1, unless you want the mesh to just not render lol)
-    file.write(struct.pack('>fff', 0.0, 0.0, 0.0))  # drawSphereX, drawSphereY, drawSphereZ (we'll just put this at 0,0,0 for now)
-    file.write(struct.pack('>f', 0.0))  # drawSphereRadius
+    file.write(struct.pack('>fff', 5.0, 5.0, 5.0))  # drawSphereX, drawSphereY, drawSphereZ (we'll just put this at 0,0,0 for now)
+    file.write(struct.pack('>f', 25.0))  # drawSphereRadius
     file.write(struct.pack('>f', 1.0))  # draw order
     
     # get the material name
